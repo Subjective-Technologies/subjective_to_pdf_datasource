@@ -1,0 +1,102 @@
+name: to-pdf
+channels:
+  - file:///brainboost/packages_conda/conda-packages  # Local conda channel with brainboost packages
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.11
+  
+  # Core scientific packages
+  - numpy=1.26.4
+  - pandas=2.2.3
+  - scipy=1.15.1
+  - matplotlib-inline=0.1.7
+  - pillow=11.0.0
+  - networkx=3.4.2
+  - numba=0.60.0
+  - sympy=1.13.1
+  
+  # ML/AI packages
+  - transformers=4.48.1
+  - nltk=3.9.1
+  - spacy=3.8.2
+  - pytorch=2.5.1
+  - torchvision=0.20.1
+  
+  # Computer Vision/OCR
+  - easyocr=1.7.2
+  - opencv=4.10.0
+  - pytesseract=0.3.13
+  
+  # Web/HTTP
+  - requests=2.32.3
+  - beautifulsoup4=4.12.3
+  - selenium
+  - urllib3=2.3.0
+  
+  # Data processing
+  - lxml=5.3.0
+  - pyyaml=6.0.2
+  - regex=2024.11.6
+  - tqdm=4.67.1
+  - joblib=1.4.2
+  
+  # Utilities
+  - click=8.1.8
+  - typer=0.15.1
+  - rich=13.9.4
+  - attrs=24.3.0
+  - certifi=2024.12.14
+  - charset-normalizer=3.4.1
+  - decorator=5.1.1
+  - jinja2=3.1.5
+  - packaging=24.2
+  - pexpect=4.9.0
+  - pluggy=1.5.0
+  - pycryptodome=3.21.0
+  - cryptography  # For encryption/decryption in ConnectionPersistor
+  - watchdog  # For file system monitoring in LocalFolderRealTimeDataSource
+  - pytest=8.3.4
+  - pytz=2024.2
+  - pyzmq=26.2.0
+  - shapely=2.0.6
+  - soupsieve=2.6
+  - typing_extensions=4.12.2
+  - mpmath=1.3.0
+  
+  # Redis
+  - redis-py=5.2.0
+  
+  # PyQt5 for GUI
+  - pyqt=5.15.10
+  
+  # Additional conda packages
+  - ffmpeg  # For audio/video processing
+  - imageio=2.36.1
+  - jupyterlab  # Development environment
+  - jupyter
+  - ipython
+  - matplotlib
+  - seaborn
+  - plotly
+  - bokeh
+  - statsmodels
+  - scikit-learn
+  - xgboost
+  - lightgbm
+  - catboost
+  - dask
+  - fsspec
+  
+  # BrainBoost packages from local conda channel
+  - brainboost-configuration-package=0.1.0
+  - brainboost-data-tools-logger-package=0.1.0
+  - brainboost-data-tools-pipe-pii-package=0.1.0
+  - brainboost-desktop-package=0.1.0
+  - brainboost-ocr-package=0.1.0
+  - subjective-abstract-data-source-package=0.1.0
+  
+  # Pip packages
+  - pip
+  - pip:
+    - python-dotenv>=0.19.0
