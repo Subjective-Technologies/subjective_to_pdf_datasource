@@ -17,6 +17,9 @@ from PyPDF2 import PdfMerger, PdfReader, PdfWriter
 from PyPDF2.errors import EmptyFileError
 from subjective_abstract_data_source_package import SubjectiveDataSource
 
+# Increase recursion limit for large PDF processing
+sys.setrecursionlimit(10000)
+
 
 class SubjectiveToPdfDataSource(SubjectiveDataSource):
     """
@@ -205,62 +208,196 @@ class SubjectiveToPdfDataSource(SubjectiveDataSource):
             return None
     
     def split_pdf_by_pages(self, input_pdf: str, chunks: int) -> List[str]:
-        """Split PDF into chunks by number of pages."""
-        reader = PdfReader(input_pdf)
-        total_pages = len(reader.pages)
-        pages_per_chunk = ceil(total_pages / chunks)
-
-        base_name = os.path.splitext(input_pdf)[0]
+        """Split PDF into chunks by number of pages using external tools for reliability."""
+        try:
+            # First try to get page count using PyPDF2
+            reader = PdfReader(input_pdf)
+            total_pages = len(reader.pages)
+            pages_per_chunk = ceil(total_pages / chunks)
+            
+            base_name = os.path.splitext(input_pdf)[0]
+            output_files = []
+            
+            self.logger.info(f"Splitting PDF: {total_pages} pages into {chunks} chunks ({pages_per_chunk} pages each)")
+            
+            # Try using pdftk first (most reliable for large files)
+            pdftk_path = shutil.which("pdftk")
+            if pdftk_path:
+                self.logger.info("Using pdftk for chunking (most reliable for large files)")
+                return self._split_pdf_with_pdftk(input_pdf, total_pages, chunks, pages_per_chunk, base_name)
+            
+            # Fallback to ghostscript
+            gs_path = shutil.which("gs")
+            if gs_path:
+                self.logger.info("Using Ghostscript for chunking")
+                return self._split_pdf_with_ghostscript(input_pdf, total_pages, chunks, pages_per_chunk, base_name)
+            
+            # Last resort: PyPDF2 with memory management
+            self.logger.info("Using PyPDF2 with memory management (may be slow for large files)")
+            return self._split_pdf_with_pypdf2_fallback(input_pdf, total_pages, chunks, pages_per_chunk, base_name)
+            
+        except Exception as e:
+            self.logger.error(f"❌ Error in split_pdf_by_pages: {e}")
+            return []
+    
+    def _split_pdf_with_pdftk(self, input_pdf: str, total_pages: int, chunks: int, pages_per_chunk: int, base_name: str) -> List[str]:
+        """Split PDF using pdftk (most reliable for large files)."""
+        output_files = []
+        pdftk_path = shutil.which("pdftk")
+        
+        for i in range(chunks):
+            try:
+                start = i * pages_per_chunk + 1  # pdftk uses 1-based page numbers
+                end = min((i + 1) * pages_per_chunk, total_pages)
+                
+                self.logger.info(f"Creating chunk {i+1}: pages {start} to {end}")
+                
+                output_name = f"{base_name}_part{i+1}.pdf"
+                cmd = [pdftk_path, input_pdf, "cat", f"{start}-{end}", "output", output_name]
+                
+                result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+                
+                if result.returncode == 0:
+                    output_files.append(output_name)
+                    file_size = os.path.getsize(output_name)
+                    self.logger.info(f"✅ Created chunk: {output_name} ({end - start + 1} pages, {file_size:,} bytes)")
+                else:
+                    self.logger.error(f"❌ pdftk failed for chunk {i+1}: {result.stderr}")
+                    
+            except Exception as e:
+                self.logger.error(f"❌ Failed to create chunk {i+1} with pdftk: {e}")
+                continue
+        
+        return output_files
+    
+    def _split_pdf_with_ghostscript(self, input_pdf: str, total_pages: int, chunks: int, pages_per_chunk: int, base_name: str) -> List[str]:
+        """Split PDF using Ghostscript."""
         output_files = []
         
         for i in range(chunks):
-            writer = PdfWriter()
-            start = i * pages_per_chunk
-            end = min(start + pages_per_chunk, total_pages)
-            for p in range(start, end):
-                writer.add_page(reader.pages[p])
-            output_name = f"{base_name}_part{i+1}.pdf"
-            with open(output_name, "wb") as f:
-                writer.write(f)
-            output_files.append(output_name)
-            self.logger.info(f"Created chunk: {output_name} ({end - start} pages)")
+            try:
+                start = i * pages_per_chunk + 1
+                end = min((i + 1) * pages_per_chunk, total_pages)
+                
+                self.logger.info(f"Creating chunk {i+1}: pages {start} to {end}")
+                
+                output_name = f"{base_name}_part{i+1}.pdf"
+                
+                # Ghostscript command for page extraction
+                cmd = [
+                    "gs", "-sDEVICE=pdfwrite", "-dNOPAUSE", "-dQUIET", "-dBATCH",
+                    f"-sOutputFile={output_name}",
+                    "-f", input_pdf,
+                    "-c", f"<< /PageRange [{start} {end}] >> setpagedevice",
+                    "-c", "showpage"
+                ]
+                
+                result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+                
+                if result.returncode == 0 and os.path.exists(output_name):
+                    output_files.append(output_name)
+                    file_size = os.path.getsize(output_name)
+                    self.logger.info(f"✅ Created chunk: {output_name} ({end - start + 1} pages, {file_size:,} bytes)")
+                else:
+                    self.logger.error(f"❌ Ghostscript failed for chunk {i+1}: {result.stderr}")
+                    
+            except Exception as e:
+                self.logger.error(f"❌ Failed to create chunk {i+1} with Ghostscript: {e}")
+                continue
+        
+        return output_files
+    
+    def _split_pdf_with_pypdf2_fallback(self, input_pdf: str, total_pages: int, chunks: int, pages_per_chunk: int, base_name: str) -> List[str]:
+        """Fallback to PyPDF2 with improved memory management."""
+        output_files = []
+        
+        # Read the PDF once and store page references
+        reader = PdfReader(input_pdf)
+        
+        for i in range(chunks):
+            try:
+                start = i * pages_per_chunk
+                end = min(start + pages_per_chunk, total_pages)
+                
+                self.logger.info(f"Creating chunk {i+1}: pages {start} to {end-1}")
+                
+                # Create a new PdfWriter for each chunk
+                writer = PdfWriter()
+                
+                # Add pages in smaller batches to avoid recursion issues
+                batch_size = 50  # Smaller batch size for better memory management
+                for batch_start in range(start, end, batch_size):
+                    batch_end = min(batch_start + batch_size, end)
+                    
+                    # Progress update
+                    if batch_start % 500 == 0 or batch_start == start:
+                        self.logger.info(f"  Processing pages {batch_start} to {batch_end-1} for chunk {i+1}")
+                    
+                    # Add pages in this batch
+                    for p in range(batch_start, batch_end):
+                        try:
+                            writer.add_page(reader.pages[p])
+                        except Exception as e:
+                            self.logger.warning(f"Failed to add page {p}: {e}")
+                            continue
+                
+                # Write the chunk
+                output_name = f"{base_name}_part{i+1}.pdf"
+                with open(output_name, "wb") as f:
+                    writer.write(f)
+                
+                output_files.append(output_name)
+                file_size = os.path.getsize(output_name)
+                self.logger.info(f"✅ Created chunk: {output_name} ({end - start} pages, {file_size:,} bytes)")
+                
+                # Clear the writer to free memory
+                del writer
+                
+            except Exception as e:
+                self.logger.error(f"❌ Failed to create chunk {i+1}: {e}")
+                # Continue with next chunk instead of failing completely
+                continue
         
         return output_files
     
     def split_pdf_by_size(self, input_pdf: str, max_size: int) -> List[str]:
         """Split PDF into chunks by file size."""
-        reader = PdfReader(input_pdf)
-        base_name = os.path.splitext(input_pdf)[0]
-        writer = PdfWriter()
-        part = 1
-        output_files = []
+        try:
+            reader = PdfReader(input_pdf)
+            base_name = os.path.splitext(input_pdf)[0]
+            writer = PdfWriter()
+            part = 1
+            output_files = []
 
-        for page in reader.pages:
-            writer.add_page(page)
-            temp_file = f"{base_name}_temp.pdf"
-            with open(temp_file, "wb") as f:
-                writer.write(f)
-            size = os.path.getsize(temp_file)
+            for page in reader.pages:
+                writer.add_page(page)
+                temp_file = f"{base_name}_temp.pdf"
+                with open(temp_file, "wb") as f:
+                    writer.write(f)
+                size = os.path.getsize(temp_file)
 
-            if size >= max_size:
+                if size >= max_size:
+                    output_name = f"{base_name}_part{part}.pdf"
+                    os.replace(temp_file, output_name)
+                    output_files.append(output_name)
+                    self.logger.info(f"Created chunk: {output_name}")
+                    writer = PdfWriter()
+                    part += 1
+
+            if len(writer.pages) > 0:
                 output_name = f"{base_name}_part{part}.pdf"
-                os.replace(temp_file, output_name)
+                with open(output_name, "wb") as f:
+                    writer.write(f)
                 output_files.append(output_name)
                 self.logger.info(f"Created chunk: {output_name}")
-                writer = PdfWriter()
-                part += 1
 
-        if len(writer.pages) > 0:
-            output_name = f"{base_name}_part{part}.pdf"
-            with open(output_name, "wb") as f:
-                writer.write(f)
-            output_files.append(output_name)
-            self.logger.info(f"Created chunk: {output_name}")
-
-        if os.path.exists(temp_file):
-            os.remove(temp_file)
-        
-        return output_files
+            if os.path.exists(temp_file):
+                os.remove(temp_file)
+            
+            return output_files
+        except Exception as e:
+            self.logger.error(f"❌ Error in split_pdf_by_size: {e}")
+            return []
     
     # -------------------- DATA SOURCE METHODS -------------------- #
     
@@ -401,11 +538,44 @@ class SubjectiveToPdfDataSource(SubjectiveDataSource):
             # In a real implementation, you might store to a database or other storage system
             output_file = os.path.join(self.output_directory, f"processing_log_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json")
             
+            # Limit data to avoid JSON recursion errors with large datasets
+            # Store only processing results and first 100 PDF records
+            limited_data = []
+            processing_results = []
+            pdf_records = []
+            
+            for record in data:
+                if record.get('id', '').startswith('processing_'):
+                    processing_results.append(record)
+                else:
+                    pdf_records.append(record)
+            
+            # Add all processing results
+            limited_data.extend(processing_results)
+            
+            # Add summary info about PDF records instead of all records
+            if pdf_records:
+                summary_record = {
+                    'id': f'summary_{datetime.now().isoformat()}',
+                    'timestamp': datetime.now().isoformat(),
+                    'source': 'to_pdf',
+                    'total_pdf_files': len(pdf_records),
+                    'sample_files': pdf_records[:10],  # First 10 as samples
+                    'summary_stats': {
+                        'total_files': len(pdf_records),
+                        'total_size_bytes': sum(r.get('file_size', 0) for r in pdf_records),
+                        'valid_files': sum(1 for r in pdf_records if r.get('is_valid', False)),
+                        'invalid_files': sum(1 for r in pdf_records if not r.get('is_valid', True))
+                    }
+                }
+                limited_data.append(summary_record)
+            
             import json
             with open(output_file, 'w') as f:
-                json.dump(data, f, indent=2, default=str)
+                json.dump(limited_data, f, indent=2, default=str)
             
-            self.logger.info(f"Successfully stored {len(data)} records to {output_file}")
+            self.logger.info(f"Successfully stored {len(limited_data)} records to {output_file}")
+            self.logger.info(f"Processing results: {len(processing_results)}, PDF summary: {len(pdf_records)} files")
             return True
             
         except Exception as e:
@@ -541,6 +711,29 @@ class SubjectiveToPdfDataSource(SubjectiveDataSource):
                 'default': None,
                 'sensitive': False
             }
+        }
+    
+    def fetch(self) -> List[Dict[str, Any]]:
+        """
+        Fetch data from the data source.
+        
+        Returns:
+            List[Dict[str, Any]]: List of fetched data records
+        """
+        return self.extract_data()
+    
+    def get_connection_data(self) -> Dict[str, Any]:
+        """
+        Get connection data for the data source.
+        
+        Returns:
+            Dict[str, Any]: Connection data dictionary
+        """
+        return {
+            'input_directory': self.input_directory,
+            'output_directory': self.output_directory,
+            'enable_compression': self.enable_compression,
+            'chunk_config': self.chunk_config
         }
 
 
