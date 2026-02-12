@@ -1,4 +1,5 @@
 {
+  "description": "Processes PDF operations (merge, compress, chunk, transform) and emits resulting artifacts and metadata for downstream workflows.",
   "domainCategory": "Data & Analytics",
   "subjectiveTechnologyElement": "Pipelines",
   "publisher": "BrainBoost Ltd.",
@@ -9,7 +10,7 @@
     {
       "type": "splitList",
       "title": "To PDF",
-      "text": "SubjectiveToPdfDataSource - Batch data source implementation",
+      "text": "Processes PDF operations (merge, compress, chunk, transform) and emits resulting artifacts and metadata for downstream workflows.",
       "image": {
         "src": "/subjective_to_pdf_datasource/icon.svg",
         "alt": "To PDF icon"
